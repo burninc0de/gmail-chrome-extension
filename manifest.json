@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Gmail Always Ask Save As",
-  "version": "1.0.1",
+  "version": "1.0.6",
   "description": "Forces the 'Save As' dialog when downloading files from Gmail.",
-  "permissions": ["downloads", "tabs"],
+  "permissions": ["downloads"],
   "background": {
     "service_worker": "background.js"
   },
