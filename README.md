@@ -15,12 +15,17 @@ Chrome only has a global "Ask where to save" toggle. There's no per-site setting
 **Ultra-light, wake-only-on-download** — no content scripts, no polling.
 
 1. Listens to `chrome.downloads.onCreated` (wakes only when a download starts)
-2. One sync check:
+2. One sync check (hostname-based, no false positives on `github.com/.../gmail-extension`):
    ```js
-   referrer.includes("mail.google.com") || url.includes("mail-attachment.googleusercontent.com")
+   hostname === "mail.google.com" || hostname === "mail-attachment.googleusercontent.com"
    ```
 3. If Gmail → `cancel()` the silent download → `download({ url, saveAs: true })` (always prompts)
 4. If not Gmail → `return` immediately (~0.1ms)
+
+**Hardened against loops:**
+* `byExtensionId` check — ignores its own re-downloads (handles the `mail.google.com` → `googleusercontent.com` redirect)
+* `startTime` age check — ignores old/resumed downloads from crashes (no startup spam)
+* Rate-limit 1 prompt per 3s — hammering Cancel won't spawn 99 dialogs
 
 Manifest V3 service worker sleeps until next download. No `tabs` permission needed in v1.0.6+.
 
@@ -47,7 +52,10 @@ icon*.png       — icons
 
 ## Versions
 
-* **v1.0.6** — Ultra-light: wake only on `downloads.onCreated`, check `referrer/url` only
+* **v1.0.9** — Fix startup spam (age check) + Cancel loop (byExtensionId + rate-limit)
+* **v1.0.8** — Fix Cancel re-trigger via `byExtensionId` + debounce
+* **v1.0.7** — Fix infinite loop from URL mismatch after Gmail redirect
+* **v1.0.6** — Ultra-light: wake only on `downloads.onCreated`, hostname check only
 * **v1.0.5** — Fixed `Invalid filename` loop (don't pass `filename` to `download()`)
 * **v1.0.4** — Switched from `onDeterminingFilename` (ignored) to `cancel+redownload` fallback
 * **v1.0.1-1.0.3** — Diagnostic builds proving `saveAs` is ignored for `disp=safe`
