@@ -1,45 +1,60 @@
-// Gmail Always Ask Save As - v1.0.6 ULTRA-LIGHT
-// Wakes ONLY on downloads.onCreated - no tabs listeners, no tabs permission
-// Relies purely on referrer/url (proven reliable: referrer is always https://mail.google.com/)
+// Gmail Always Ask Save As - v1.0.9 FIX startup spam
+// Startup spam was from Chrome resuming 99 interrupted Gmail downloads
+// from the previous loop crash. Fix: only handle FRESH downloads (started <3s ago)
+// and rate-limit to 1 per 3 seconds.
 
-console.log("[Gmail Save As] Service worker loaded v1.0.6 ultra-light");
+console.log("[Gmail Save As] Service worker loaded v1.0.9 no-startup-spam");
 
-const forcing = new Set();
+let lastForcedAt = 0;
+let lastForcedUrl = "";
 
 function isGmailDownload(item) {
   const r = item.referrer || "";
   const u = item.url || "";
-  return r.includes("mail.google.com") || 
-         r.includes("gmail.com") || 
-         u.includes("mail.google.com") || 
-         u.includes("mail-attachment.googleusercontent.com");
+  try {
+    if (r) {
+      const rh = new URL(r).hostname;
+      if (rh === "mail.google.com" || rh === "gmail.com" || rh.endsWith(".gmail.com")) return true;
+    }
+    if (u) {
+      const uh = new URL(u).hostname;
+      if (uh === "mail.google.com" || uh === "mail-attachment.googleusercontent.com") return true;
+    }
+  } catch(e) {}
+  return r.includes("mail.google.com") || u.includes("mail.google.com") || u.includes("mail-attachment.googleusercontent.com");
 }
 
 chrome.downloads.onCreated.addListener(async (item) => {
-  console.log(`[Gmail Save As] onCreated id=${item.id} filename="${item.filename}" referrer="${item.referrer}" url=${item.url.substring(0,120)}`);
+  if (item.byExtensionId === chrome.runtime.id) return; // our own
 
-  if (forcing.has(item.url)) {
-    console.log(`[Gmail Save As] -> already forced, allowing`);
-    forcing.delete(item.url);
+  // Ignore old/resumed downloads from previous crash (startup spam)
+  // Fresh Gmail clicks have startTime within ~1 sec
+  try {
+    const age = Date.now() - new Date(item.startTime).getTime();
+    if (age > 3000) {
+      console.log(`[Gmail Save As] IGNORED old/resumed download age=${age}ms id=${item.id}`);
+      return;
+    }
+  } catch(e){}
+
+  // Rate limit: max 1 prompt per 3 seconds
+  const now = Date.now();
+  if (now - lastForcedAt < 3000) {
+    console.log(`[Gmail Save As] RATE LIMITED id=${item.id}`);
     return;
   }
+  if (item.url === lastForcedUrl && (now - lastForcedAt) < 5000) return;
 
-  if (!isGmailDownload(item)) {
-    console.log(`[Gmail Save As] -> not Gmail`);
-    return;
-  }
+  if (!isGmailDownload(item)) return;
 
-  console.log(`[Gmail Save As] -> GMAIL, canceling ${item.id} and re-downloading with saveAs:true`);
-  
+  console.log(`[Gmail Save As] GMAIL id=${item.id} "${item.filename}" -> prompting`);
+  lastForcedUrl = item.url;
+  lastForcedAt = now;
+
   try { await chrome.downloads.cancel(item.id); } catch(e){}
   await new Promise(r => setTimeout(r, 150));
 
-  forcing.add(item.url);
   try {
-    const newId = await chrome.downloads.download({ url: item.url, saveAs: true });
-    console.log(`[Gmail Save As] re-download newId=${newId}`);
-  } catch(e) {
-    console.error("[Gmail Save As] download() failed", e);
-    forcing.delete(item.url);
-  }
+    await chrome.downloads.download({ url: item.url, saveAs: true });
+  } catch(e) { console.error(e); }
 });
